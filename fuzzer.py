@@ -1,8 +1,12 @@
+#!/usr/bin/env python3
+
 from boofuzz import *
 from enum import Enum
 import pyshark
 import binascii
 import subprocess
+import time
+import argparse
 
 class FieldType(Enum):
     TAG = 0
@@ -21,18 +25,17 @@ def parseTLV(block):
     cur = 0
     l = len(block)
     
-    # cur->[tag, cur+1: length, cur+2: value cur+2+length:]
     while cur < l:
         tagLen = 1
         tag = block[cur].to_bytes(1, "big")
         if getBits(tag[-1], 0,4) == 31:
             tagLen += 1
             tag = block[cur:cur + tagLen]
-            print(f"Long tag {tagLen} Tag: {tag}")
+            print(f"Long tag: Len {tagLen} Tag: {tag}")
             while getBit(tag[-1], 7) == 1:
                 tagLen += 1
                 tag = block[cur:cur + tagLen]
-                print(f"Long tag {tagLen} Tag: {tag}")
+                print(f"Long tag: Len {tagLen} Tag: {tag}")
                 
         res.append((FieldType.TAG, tag))
         length = block[cur + tagLen]
@@ -66,7 +69,7 @@ def setupFuzzTLV(TLV):
     children = []
     for t, el in TLV:
         if t == FieldType.TAG:
-            children += [Bytes(name="Tag"+str(nameCount), size=len(el), default_value=el, fuzzable=False)]
+            children += [Bytes(name="Tag"+str(nameCount), size=len(el), default_value=el, fuzzable=True)]
         elif t == FieldType.LENGTH:
             children += [Size(name="Length"+str(nameCount), block_name="Value"+str(nameCount), length=1, fuzzable=False)]
         elif t == FieldType.VALUE:
@@ -125,10 +128,47 @@ def ping(target, fuzz_data_logger, session, test_case_context=None, *args, **kwa
     else:
         fuzz_data_logger.log_fail("Ping failed")
 
+"""
+Starts the testClient as a subprocess, and intercepts the traffic in a pcap file.
+"""
+def genTraffic(target, pcapName, interface):
+    subprocess.run(f"sudo rm {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"touch {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"sudo chmod o=rw {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    print("Starting Capture")
+    capture = subprocess.Popen(["sudo", "tshark", "-i", interface, "-w", pcapName, "-f", f"tcp port {target[1]}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    print("Starting Client")
+    subprocess.run(f"./testClient/testClient.out -h {target[0]} -p {target[1]}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    print("Stopping Capture")
+    time.sleep(0.5)
+    subprocess.check_call(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    time.sleep(0.5)
+    print("Generated traffic!")
 
+    
 
 def main():
-    target = ("localhost", 102)
+    parser = argparse.ArgumentParser(
+        description="A fuzzer for IEC 61850 MMS"
+    )
+    parser.add_argument("-p", "--pcap", help="The pcap file to use as input, if not specified, a new one will be generated")
+    parser.add_argument("-i", "--interface", help="The interface on which to capture traffic", default="lo")
+    parser.add_argument("-t", "--target", help="The target to fuzz", default="localhost:102")
+    parser.add_argument("--testRun", help="Set to do a test run of the fuzzer without the actual fuzzing step", action="store_false", default=True)
+    
+
+    args = parser.parse_args()
+    target=args.target.split(":")
+    target = (target[0], int(target[1]))
+    if args.pcap:
+        pcap = args.pcap
+        generate = False
+    else:
+        pcap = "mms.pcapng"
+        generate = True
+    interface = args.interface
+    testRun = not args.testRun
 
     session = Session(
         target=Target(
@@ -138,8 +178,9 @@ def main():
     )
 
 
-    filter = f"((mms) && (ip.src == 127.0.0.1)) && (tcp.dstport == {target[1]})"
-    pcap = "testTraffic.pcapng"
+    if generate:
+        genTraffic(target, pcap, interface)
+
 
     cap = pyshark.FileCapture(pcap, display_filter="cotp")
     handshake1 = packetToBytes(cap[0].tcp.payload)
@@ -151,6 +192,7 @@ def main():
     session.connect(handshake1)
     session.connect(handshake1, handshake2)
 
+    filter = f"(mms) && (tcp.dstport == {target[1]})"
     cap = pyshark.FileCapture(pcap, display_filter=filter, include_raw=True, use_json=True)
     for i, pack in enumerate(cap):
         print(f"Parsing {i}")
@@ -164,8 +206,11 @@ def main():
         curReq = Request(f"{name}[{i}]", children=(head, funk))
         session.connect(handshake2, curReq)
         print(f"Success {i}")
-    cap.close() 
-    session.fuzz()
+    cap.close()
+    subprocess.call(f"sudo rm {pcap}", shell=True)
+
+    if not testRun:
+        session.fuzz()
 
 
 if __name__ == "__main__":
