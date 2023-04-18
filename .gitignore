@@ -54,3 +54,5 @@ dkms.conf
 .vscode/
 examples/
 *.pcap*
+boofuzz-results/
+__pycache__/
