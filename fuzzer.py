@@ -113,11 +113,11 @@ handshake1Pack = b"\x03\x00\x00\x16\x11\xe0\x00\x00\x00\x01\x00\xc0\x01\r\xc2\x0
 handshake2Pack = b'\x03\x00\x00\xbb\x02\xf0\x80\r\xb2\x05\x06\x13\x01\x00\x16\x01\x02\x14\x02\x00\x023\x02\x00\x014\x02\x00\x01\xc1\x9c1\x81\x99\xa0\x03\x80\x01\x01\xa2\x81\x91\x81\x04\x00\x00\x00\x01\x82\x04\x00\x00\x00\x01\xa4#0\x0f\x02\x01\x01\x06\x04R\x01\x00\x010\x04\x06\x02Q\x010\x10\x02\x01\x03\x06\x05(\xca"\x02\x010\x04\x06\x02Q\x01a^0\\\x02\x01\x01\xa0W`U\xa1\x07\x06\x05(\xca"\x02\x03\xa2\x07\x06\x05)\x01\x87g\x01\xa3\x03\x02\x01\x0c\xa6\x06\x06\x04)\x01\x87g\xa7\x03\x02\x01\x0c\xbe/(-\x02\x01\x03\xa0(\xa8&\x80\x03\x00\xfd\xe8\x81\x01\x05\x82\x01\x05\x83\x01\n\xa4\x16\x80\x01\x01\x81\x03\x05\xf1\x00\x82\x0c\x03\xee\x1c\x00\x00\x04\x08\x00\x00y\xef\x18'
 pingPack = b"\x03\x00\x00\x1b\x02\xf0\x80\x01\x00\x01\x00\x61\x0e\x30\x0c\x02\x01\x03\xa0\x07\xa0\x05\x02\x01\x1a\x82\x00"
 
-def ping(target, fuzz_data_logger, session, test_case_context=None, *args, **kwargs):
+def ping(target:Target, fuzz_data_logger, session, test_case_context=None, *args, **kwargs):
     target.open()
     fuzz_data_logger.log_info("Sending handshake")
     target.send(handshake1Pack)
-    target.send(handshake2Pack)
+    target.send(handshake2Pack)    
     target.recv()
     fuzz_data_logger.log_info("Pinging")
     target.send(pingPack)
@@ -131,7 +131,7 @@ def ping(target, fuzz_data_logger, session, test_case_context=None, *args, **kwa
 """
 Starts the testClient as a subprocess, and intercepts the traffic in a pcap file.
 """
-def genTraffic(target, pcapName, interface):
+def genTraffic(target, pcapName, interface, coverage):
     subprocess.run(f"sudo rm {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     subprocess.run(f"touch {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     subprocess.run(f"sudo chmod o=rw {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
@@ -139,7 +139,7 @@ def genTraffic(target, pcapName, interface):
     capture = subprocess.Popen(["sudo", "tshark", "-i", interface, "-w", pcapName, "-f", f"tcp port {target[1]}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.5)
     print("Starting Client")
-    subprocess.run(f"./testClient/testClient.out -h {target[0]} -p {target[1]}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"./testClient/testClient.out -h {target[0]} -p {target[1]} -e {coverage}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     print("Stopping Capture")
     time.sleep(0.5)
     subprocess.check_call(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
@@ -155,6 +155,7 @@ def main():
     parser.add_argument("-p", "--pcap", help="The pcap file to use as input, if not specified, a new one will be generated")
     parser.add_argument("-i", "--interface", help="The interface on which to capture traffic", default="lo")
     parser.add_argument("-t", "--target", help="The target to fuzz", default="localhost:102")
+    parser.add_argument("-c", "--coverage", help="Which coverage preset to use (0|1|2|3|4)", default=1)
     parser.add_argument("--testRun", help="Set to do a test run of the fuzzer without the actual fuzzing step", action="store_false", default=True)
     
 
@@ -169,17 +170,20 @@ def main():
         generate = True
     interface = args.interface
     testRun = not args.testRun
+    coverage = args.coverage
 
     session = Session(
         target=Target(
         connection=TCPSocketConnection(target[0], target[1])
         ),
-        post_test_case_callbacks=[ping]
+        post_test_case_callbacks=[ping],
+        fuzz_loggers=[],
+        restart_sleep_time=0
     )
 
 
     if generate:
-        genTraffic(target, pcap, interface)
+        genTraffic(target, pcap, interface, coverage)
 
 
     cap = pyshark.FileCapture(pcap, display_filter="cotp")
@@ -210,6 +214,8 @@ def main():
     subprocess.call(f"sudo rm {pcap}", shell=True)
 
     if not testRun:
+        print("Starting Fuzzing")
+        print("Interface available at http://localhost:26000")
         session.fuzz()
 
 

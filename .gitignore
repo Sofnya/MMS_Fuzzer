@@ -56,3 +56,4 @@ examples/
 *.pcap*
 boofuzz-results/
 __pycache__/
+*.profile
