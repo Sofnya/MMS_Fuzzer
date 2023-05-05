@@ -142,7 +142,7 @@ def genTraffic(target, pcapName, interface, coverage):
     subprocess.check_call(f"./trafficGen/trafficGen.out -h {target[0]} -p {target[1]} -e {coverage}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     print("Stopping Capture")
     time.sleep(0.5)
-    subprocess.run(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.check_call(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     time.sleep(0.5)
     print("Generated traffic!")
 
