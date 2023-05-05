@@ -132,17 +132,17 @@ def ping(target:Target, fuzz_data_logger, session, test_case_context=None, *args
 Starts the testClient as a subprocess, and intercepts the traffic in a pcap file.
 """
 def genTraffic(target, pcapName, interface, coverage):
-    subprocess.run(f"sudo rm {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"rm {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     subprocess.run(f"touch {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
-    subprocess.run(f"sudo chmod o=rw {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"chmod o=rw {pcapName}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     print("Starting Capture")
     capture = subprocess.Popen(["sudo", "tshark", "-i", interface, "-w", pcapName, "-f", f"tcp port {target[1]}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.5)
     print("Starting Client")
-    subprocess.run(f"./testClient/testClient.out -h {target[0]} -p {target[1]} -e {coverage}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.check_call(f"./trafficGen/trafficGen.out -h {target[0]} -p {target[1]} -e {coverage}",stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     print("Stopping Capture")
     time.sleep(0.5)
-    subprocess.check_call(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
+    subprocess.run(f"sudo kill -SIGTERM {capture.pid}", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=True)
     time.sleep(0.5)
     print("Generated traffic!")
 
@@ -211,7 +211,7 @@ def main():
         session.connect(handshake2, curReq)
         print(f"Success {i}")
     cap.close()
-    subprocess.call(f"sudo rm {pcap}", shell=True)
+    subprocess.call(f"rm {pcap}", shell=True)
 
     if not testRun:
         print("Starting Fuzzing")

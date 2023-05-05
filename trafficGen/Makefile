@@ -1,7 +1,7 @@
-LIBIEC_HOME=../../libiec61850
+LIBIEC_HOME= ../../libiec61850
 
-PROJECT_BINARY_NAME = testClient.out
-PROJECT_SOURCES = testClient.c
+PROJECT_BINARY_NAME = trafficGen.out
+PROJECT_SOURCES = trafficGen.c
 
 include $(LIBIEC_HOME)/make/target_system.mk
 include $(LIBIEC_HOME)/make/stack_includes.mk
