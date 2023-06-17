@@ -7,18 +7,89 @@ import binascii
 import subprocess
 import time
 import argparse
+import random
 
+fuzzLogger = None
 class FieldType(Enum):
     TAG = 0
-    LENGTH = 1
-    VALUE = 2
-    TLV = 3
+    CONSTRUCTED_TAG=1
+    LENGTH = 2
+    VALUE = 3
+    TLV = 4
 
 def getBit(byte, ind):
     return (byte >> ind) & 1
 
 def getBits(byte, start, end):
     return (byte >> start) & ((1 << (end-start+1)) - 1)
+
+def setBit(byte, ind):
+    return byte | (1 << ind)
+
+def setBits(byte, start, end):
+    mask = ((1 << (end-start+1)) - 1) << start
+    return (byte | mask)
+
+class MMSType(Bytes):
+    def __init__(
+        self,
+        name: str = None,
+        default_value: bytes = b"",
+        size: int = None,
+        padding: bytes = b"\x00",
+        max_len: int = None,
+        isConstructed: bool = False,
+        *args,
+        **kwargs
+    ):
+        self.isConstructed = isConstructed
+        super().__init__(name=name, default_value=default_value, size=size, padding=padding, max_len=max_len, *args, **kwargs)
+    
+    def encode(self,value,mutation_context):
+        value = super().encode(value, mutation_context)
+        if value is None:
+            value = b""
+            return value
+        res = [el for el in value]
+        if self.isConstructed:
+            res[0] = setBit(res[0],5)
+        l = len(value)
+        if l > 1:
+            res[0] = setBits(res[0], 0,4)
+            for i in range(1,l-1):
+                res[i] = setBit(res[i], 7)
+        return bytes(res)
+
+def shortLengthEncoding(value):
+    return value
+def longLengthEncoding(value, max_length):
+    res = [el for el in value]
+    length = random.randint(1, max_length)
+    res[0] = length
+    res[0] = setBit(res[0], 7)
+    fuzzLogger.log_info("Long length: " + str(length))
+    tmp = value[0].to_bytes(length, "big")
+    for el in tmp:
+        res.append(el)
+    return bytes(res)
+
+class MMSLength(Size):
+    def __init__(self, name=None, block_name=None, request=None, offset=0, length=4, endian="<", output_format="binary", inclusive=False, signed=False, math=None, max_length=0, *args, **kwargs):
+        if(max_length == 0):
+            self.max_length = length
+        else:
+            self.max_length = max_length
+        super().__init__(name, block_name, request, offset, length, endian, output_format, inclusive, signed, math, *args, **kwargs)
+    
+    def encode(self, value, mutation_context):
+        value = super().encode(value, mutation_context)
+        if random.random() > 0.01:
+            value = shortLengthEncoding(value)
+        else:
+            value = longLengthEncoding(value, self.max_length)
+        return value
+
+
 
 def parseTLV(block):
     res = []
@@ -36,8 +107,10 @@ def parseTLV(block):
                 tagLen += 1
                 tag = block[cur:cur + tagLen]
                 print(f"Long tag: Len {tagLen} Tag: {tag}")
-                
-        res.append((FieldType.TAG, tag))
+        if getBit(tag[0], 5) == 1:
+            res.append((FieldType.CONSTRUCTED_TAG, tag))
+        else:       
+            res.append((FieldType.TAG, tag))
         length = block[cur + tagLen]
         res.append((FieldType.LENGTH, length.to_bytes(1, "big")))
         value = block[cur +tagLen + 1:cur + tagLen + 1+ length]
@@ -54,6 +127,8 @@ def recomposeTLV(TLV):
     for el in TLV:
         if el[0] == FieldType.TAG:
             res += el[1]
+        elif el[0] == FieldType.CONSTRUCTED_TAG:
+            res += el[1]
         elif el[0] == FieldType.LENGTH:
             res += el[1]
         elif el[0] == FieldType.VALUE:
@@ -69,11 +144,13 @@ def setupFuzzTLV(TLV):
     children = []
     for t, el in TLV:
         if t == FieldType.TAG:
-            children += [Bytes(name="Tag"+str(nameCount), size=len(el), default_value=el, fuzzable=True)]
+            children += [MMSType(name="Tag"+str(nameCount), max_len=3, size=len(el), default_value=el, fuzzable=True)]
+        elif t == FieldType.CONSTRUCTED_TAG:
+            children += [MMSType(name="Tag"+str(nameCount), max_len=3, size=len(el), default_value=el, fuzzable=True, isConstructed=True)]
         elif t == FieldType.LENGTH:
-            children += [Size(name="Length"+str(nameCount), block_name="Value"+str(nameCount), length=1, fuzzable=False)]
+            children += [MMSLength(name="Length"+str(nameCount), block_name="Value"+str(nameCount), length=1, max_length=126, fuzzable=False)]
         elif t == FieldType.VALUE:
-            children += [RandomData(name="Value"+str(nameCount), max_length=0xff, min_length = 0, default_value=el)]
+            children += [Bytes(name="Value"+str(nameCount), max_len=0xff, default_value=el, fuzzable=True)]
             nameCount +=1
         elif t == FieldType.TLV:
             nameCount += 1
@@ -147,7 +224,6 @@ def genTraffic(target, pcapName, interface, coverage):
     print("Generated traffic!")
 
     
-
 def main():
     parser = argparse.ArgumentParser(
         description="A fuzzer for IEC 61850 MMS"
@@ -192,6 +268,8 @@ def main():
     handshake1 = Request("handshake1", children=[Static(name="handshake1", default_value=handshake1)])
     handshake2 = Request("handshake2", children=[Static(name="handshake2", default_value=handshake2)])
     cap.close()
+    global fuzzLogger
+    fuzzLogger = session._fuzz_data_logger
 
     session.connect(handshake1)
     session.connect(handshake1, handshake2)
