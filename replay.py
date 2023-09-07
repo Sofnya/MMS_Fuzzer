@@ -33,6 +33,7 @@ def main():
     a = cur.execute(f"SELECT type,data FROM steps WHERE test_case_index = {index}").fetchall()
     con.close()
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(10)
     s.connect(target)
     for i in a:
         if i[0] == "send":

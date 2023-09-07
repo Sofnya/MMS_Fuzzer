@@ -60,3 +60,5 @@ __pycache__/
 
 libiec61850
 testServer
+
+.private/
