@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# Depends on tshark
+# Depends on tcpdump
 sudo apt-get update
-sudo apt-get install -y tshark
+sudo apt-get install -y tcpdump
 
 # Pip3 requirements
 pip3 install -r requirements.txt
